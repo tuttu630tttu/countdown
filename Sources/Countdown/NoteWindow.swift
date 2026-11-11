@@ -3,6 +3,7 @@ import CountdownCore
 
 final class CountdownWindow: NSWindow {
     var compactMode = false
+    var finishedDoubleClick: (() -> Bool)?
     private var dragStart: NSPoint?
     private var dragOrigin = NSPoint.zero
 
@@ -56,6 +57,14 @@ final class CountdownWindow: NSWindow {
     override func sendEvent(_ event: NSEvent) {
         guard compactMode else { super.sendEvent(event); return }
         switch event.type {
+        case .leftMouseDown where event.clickCount == 2:
+            // Handle a finished note before hit testing. Its text and background
+            // can receive different events after the first click starts a drag.
+            if finishedDoubleClick?() == true {
+                dragStart = nil
+                return
+            }
+            super.sendEvent(event)
         case .leftMouseDown where event.clickCount == 1:
             // Keep the outer edge available for the native resize interaction.
             let interior = NSRect(origin: .zero, size: frame.size).insetBy(dx: 6, dy: 6)
@@ -155,6 +164,11 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         window.contentMinSize = note.isCompact ? NSSize(width: 120, height: 60) : NSSize(width: 220, height: 164)
         window.contentMaxSize = NSSize(width: 900, height: 600)
         window.contentView = surface
+        window.finishedDoubleClick = { [weak self] in
+            guard let self, self.app.note(self.id)?.isFinished(at: Date()) == true else { return false }
+            self.editTime()
+            return true
+        }
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         surface.relayout = { [weak self] in self?.layoutContents() }
         surface.doubleClick = { [weak self] in self?.editTime() }
