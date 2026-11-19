@@ -159,6 +159,33 @@ import Foundation
         checkEqual(note.deadline, now.addingTimeInterval(180))
     }
 
+    @Test func testCompactDoubleClickRoutesEachArea() {
+        for (action, labelClick, expected) in [
+            (CompactDoubleClickAction.clickedArea, true, true), (.clickedArea, false, false),
+            (.time, true, false), (.time, false, false), (.label, true, true), (.label, false, true)
+        ] {
+            checkEqual(action.editsLabel(clickedLabel: labelClick), expected)
+        }
+    }
+
+    @Test func testCompactDoubleClickPreferencesPreserveOldState() throws {
+        let legacy = Data(#"{"appearance":{"color":"yellow","opacity":0.7,"floating":true},"showSeconds":false,"pauseEnabled":false,"soundEnabled":false,"notificationsEnabled":false,"confettiEnabled":false}"#.utf8)
+        var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
+        checkEqual(preferences.effectiveCompactDoubleClickAction, .clickedArea)
+        for action in CompactDoubleClickAction.allCases {
+            preferences.compactDoubleClickAction = action
+            var state = AppState()
+            state.preferences = preferences
+            var note = TimerNote()
+            let now = Date()
+            try note.start(input: "3m", specification: .duration(180), now: now, order: 1)
+            state.open = [note]
+            let restored = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(state))
+            checkEqual(restored.preferences.effectiveCompactDoubleClickAction, action)
+            checkEqual(restored.open[0].deadline, note.deadline)
+        }
+    }
+
     @Test func testOldStateAndCompactWindowRestoration() throws {
         let now = Date()
         var note = TimerNote()

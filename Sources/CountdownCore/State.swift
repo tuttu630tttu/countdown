@@ -22,11 +22,29 @@ public struct Appearance: Codable, Equatable {
     public init() {}
 }
 
+public enum CompactDoubleClickAction: String, Codable, CaseIterable {
+    case clickedArea, time, label
+
+    public var title: String {
+        switch self {
+        case .clickedArea: return "クリックした場所に合わせる"
+        case .time: return "常に時間を編集"
+        case .label: return "常にラベルを編集"
+        }
+    }
+
+    public func editsLabel(clickedLabel: Bool) -> Bool {
+        self == .label || (self == .clickedArea && clickedLabel)
+    }
+}
+
 public struct Preferences: Codable {
     public var appearance = Appearance()
     public var showSeconds = false
     public var displayMode: TimeDisplayMode?
     public var effectiveDisplayMode: TimeDisplayMode { displayMode ?? (showSeconds ? .seconds : .minutes) }
+    public var compactDoubleClickAction: CompactDoubleClickAction?
+    public var effectiveCompactDoubleClickAction: CompactDoubleClickAction { compactDoubleClickAction ?? .clickedArea }
     public var pauseEnabled = false
     public var soundEnabled = false
     public var notificationsEnabled = false

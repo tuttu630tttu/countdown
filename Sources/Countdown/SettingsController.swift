@@ -9,6 +9,7 @@ final class SettingsController: NSWindowController {
     private let opacityLabel = NSTextField(labelWithString: "")
     private let floating = NSButton(checkboxWithTitle: "最前面に表示", target: nil, action: nil)
     private let displayMode = NSPopUpButton()
+    private let doubleClickAction = NSPopUpButton()
     private let pause = NSButton(checkboxWithTitle: "相対時間の一時停止を有効にする", target: nil, action: nil)
     private let sound = NSButton(checkboxWithTitle: "終了時に短い音を鳴らす", target: nil, action: nil)
     private let notifications = NSButton(checkboxWithTitle: "終了時にシステム通知を出す", target: nil, action: nil)
@@ -17,7 +18,7 @@ final class SettingsController: NSWindowController {
     init(app: AppController, noteID: UUID?) {
         self.app = app
         self.noteID = noteID
-        let height: CGFloat = noteID == nil ? 520 : 206
+        let height: CGFloat = noteID == nil ? 564 : 206
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 370, height: height),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = noteID == nil ? "設定" : "このタイマーの外観"
@@ -57,6 +58,12 @@ final class SettingsController: NSWindowController {
             let displayRow = NSStackView(views: [NSTextField(labelWithString: "残り時間の表示"), displayMode])
             displayRow.spacing = 16
             stack.addArrangedSubview(displayRow)
+            doubleClickAction.addItems(withTitles: CompactDoubleClickAction.allCases.map(\.title))
+            doubleClickAction.setAccessibilityLabel("小窓のダブルクリック動作")
+            doubleClickAction.toolTip = "オートメーションの実行中はラベルが自動更新されるため、時間の編集を開きます。"
+            let clickRow = NSStackView(views: [NSTextField(labelWithString: "小窓の操作"), doubleClickAction])
+            clickRow.spacing = 12
+            stack.addArrangedSubview(clickRow)
             for control in [pause, sound, notifications, confetti] { stack.addArrangedSubview(control) }
             let footer = NSTextField(wrappingLabelWithString: "音・通知・紙吹雪は初期OFFです。\nスリープ中に終了した場合は、復帰後の終了表示のみ。")
             footer.font = .systemFont(ofSize: 11)
@@ -66,7 +73,7 @@ final class SettingsController: NSWindowController {
             automations.bezelStyle = .rounded
             stack.addArrangedSubview(automations)
         }
-        for control in [colors, opacity, floating, displayMode, pause, sound, notifications, confetti] as [NSControl] {
+        for control in [colors, opacity, floating, displayMode, doubleClickAction, pause, sound, notifications, confetti] as [NSControl] {
             control.target = self
             control.action = #selector(changed(_:))
         }
@@ -87,6 +94,7 @@ final class SettingsController: NSWindowController {
         floating.state = look.floating ? .on : .off
         if noteID == nil {
             displayMode.selectItem(at: TimeDisplayMode.allCases.firstIndex(of: prefs.effectiveDisplayMode) ?? 0)
+            doubleClickAction.selectItem(at: CompactDoubleClickAction.allCases.firstIndex(of: prefs.effectiveCompactDoubleClickAction) ?? 0)
         }
         pause.state = prefs.pauseEnabled ? .on : .off
         sound.state = prefs.soundEnabled ? .on : .off
@@ -108,6 +116,7 @@ final class SettingsController: NSWindowController {
             prefs.appearance = look
             prefs.displayMode = TimeDisplayMode.allCases[max(0, displayMode.indexOfSelectedItem)]
             prefs.showSeconds = prefs.displayMode == .seconds
+            prefs.compactDoubleClickAction = CompactDoubleClickAction.allCases[max(0, doubleClickAction.indexOfSelectedItem)]
             prefs.pauseEnabled = pause.state == .on
             prefs.soundEnabled = sound.state == .on
             prefs.confettiEnabled = confetti.state == .on
