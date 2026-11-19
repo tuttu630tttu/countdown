@@ -127,11 +127,26 @@ final class CountdownLabel: NSTextField {
     }
 }
 
+private final class NoteLabelField: NSTextField {
+    var didFocus: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        didFocus?()
+        super.mouseDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { didFocus?() }
+        return accepted
+    }
+}
+
 final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     let id: UUID
     unowned let app: AppController
     let surface = NoteView()
-    let labelField = NSTextField()
+    private let labelField = NoteLabelField()
     let compactLabel = CountdownLabel(labelWithString: "")
     let inputField = NSTextField()
     let value = CountdownLabel(labelWithString: "")
@@ -141,6 +156,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     let look = NSButton(title: "", target: nil, action: nil)
     let pause = NSButton(title: "一時停止", target: nil, action: nil)
     var editing = false
+    private var editingLabel = false
     private var error: String?
     private var compactMenuItem: NSMenuItem?
     private var stopMenuItem: NSMenuItem?
@@ -196,6 +212,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         labelField.action = #selector(commitLabel)
         labelField.stringValue = note.label
         labelField.setAccessibilityLabel("タイマーのラベル")
+        labelField.didFocus = { [weak self] in self?.beginLabelEditing() }
         inputField.placeholderString = "17:45 / 3m / 名前"
         inputField.font = .monospacedSystemFont(ofSize: 17, weight: .regular)
         inputField.bezelStyle = .roundedBezel
@@ -224,6 +241,9 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         setIcon(details, symbol: "calendar", label: "終了日時を指定")
         setIcon(look, symbol: "slider.horizontal.3", label: "色・不透明度・最前面表示")
         for view in [labelField, compactLabel, inputField, value, hint, start, details, look, pause] { surface.addSubview(view) }
+        if !note.isCompact, note.pausedRemaining == nil, note.deadline == nil || note.isFinished(at: Date()) {
+            window.initialFirstResponder = inputField
+        }
         if let frame = note.frame {
             let saved = NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
             if NSScreen.screens.contains(where: {
@@ -266,7 +286,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         stopMenuItem?.isHidden = note.automation == nil || !running
         let compact = note.isCompact
         surface.rounded = compact
-        let inputMode = !compact && (editing || !running)
+        let inputMode = !compact && !editingLabel && (editing || !running)
         let justFinished = inputField.isHidden && inputMode && note.isFinished(at: now)
         labelField.isHidden = compact
         compactLabel.isHidden = !compact || note.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -293,7 +313,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         if let seconds = note.remaining(at: now) {
             value.stringValue = RemainingTime.text(seconds: seconds, mode: app.state.preferences.effectiveDisplayMode)
         }
-        if compact {
+        if compact || editingLabel {
             if note.automation?.stopped == true { value.stringValue = "中止しました" }
             else if note.isFinished(at: now) { value.stringValue = "終了しました" }
             else if note.remaining(at: now) == nil { value.stringValue = "時間を設定" }
@@ -306,11 +326,14 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         value.toolTip = [note.label, note.deadline.map { app.deadlineDescription($0) + " に終了" } ?? "",
             valueHelp + " · 右クリックで操作UIを表示"].filter { !$0.isEmpty }.joined(separator: "\n")
         if inputMode { updatePreview(at: now) }
-        else if note.pausedRemaining != nil { hint.stringValue = "一時停止中 · 再開するまで時間は進みません" }
+        else if note.pausedRemaining != nil {
+            hint.stringValue = editingLabel ? "一時停止中" : "一時停止中 · 再開するまで時間は進みません"
+        }
         else if let deadline = note.deadline {
             let progress = note.automation.map { "\($0.definition.name) · \($0.currentIndex + 1)/\($0.deadlines.count)\n" } ?? ""
             hint.stringValue = progress + app.deadlineDescription(deadline) + " に終了"
-        }
+        } else { hint.stringValue = "" }
+        if editingLabel { hint.stringValue = [hint.stringValue, "Tabで時間入力"].filter { !$0.isEmpty }.joined(separator: "\n") }
         hint.textColor = error == nil ? .secondaryLabelColor : .systemRed
         layoutContents()
         if justFinished, NSApp.isActive, window?.isKeyWindow == true,
@@ -391,13 +414,17 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     @objc private func commitLabel() {
         guard let note = app.note(id) else { window?.makeFirstResponder(nil); return }
         let awaitingTime = note.pausedRemaining == nil && (note.deadline == nil || note.isFinished(at: Date()))
-        let emptyInput = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if awaitingTime && emptyInput { beginTimeEditing(clearInput: false) }
+        if awaitingTime { beginTimeEditing(clearInput: false) }
         else { window?.makeFirstResponder(nil) }
     }
 
     func focusInput() {
         guard app.note(id)?.isCompact != true else { return }
+        if inputField.isHidden {
+            editingLabel = false
+            editing = true
+            update(at: Date())
+        }
         window?.makeFirstResponder(inputField)
         inputField.selectText(nil)
     }
@@ -409,6 +436,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             try app.start(id, raw: inputField.stringValue)
             inputField.stringValue = ""
             editing = false
+            editingLabel = false
             error = nil
             window?.makeFirstResponder(nil)
             update(at: Date())
@@ -425,9 +453,10 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     private func beginTimeEditing(clearInput: Bool) {
-        if app.note(id)?.isCompact == true { toggleControls() }
+        editingLabel = false
         editing = true
         error = nil
+        if app.note(id)?.isCompact == true { toggleControls() }
         if clearInput { inputField.stringValue = "" }
         update(at: Date())
         focusInput()
@@ -437,9 +466,19 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     @objc func showAppearance() { app.showAppearance(for: id) }
     @objc func togglePause() { app.togglePause(id) }
 
+    private func beginLabelEditing() {
+        guard labelField.isEditable, !editingLabel else { return }
+        editingLabel = true
+        editing = false
+        error = nil
+        suggestions.hide()
+        update(at: Date())
+    }
+
     @objc func editLabel() {
         // A running automation owns its label; open the editable time field instead.
         guard labelField.isEditable else { editTime(); return }
+        beginLabelEditing()
         if app.note(id)?.isCompact == true { toggleControls() }
         window?.makeFirstResponder(labelField)
         labelField.selectText(nil)
@@ -478,7 +517,7 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
         saveFrame()
         window.makeKeyAndOrderFront(nil)
-        if !compact, note.deadline == nil || note.isFinished(at: Date()) { focusInput() }
+        if !compact, !editingLabel, note.deadline == nil || note.isFinished(at: Date()) { focusInput() }
     }
 
     private func makeContextMenu() {
@@ -541,9 +580,15 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             if commandSelector == #selector(NSResponder.insertNewline(_:)) { beginTimer(); return true }
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) { suggestions.hide(); return true }
         }
-        if control === labelField, !textView.hasMarkedText(), commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            commitLabel()
-            return true
+        if control === labelField, !textView.hasMarkedText() {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                commitLabel()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                beginTimeEditing(clearInput: false)
+                return true
+            }
         }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)), control === inputField, editing {
             editing = false
