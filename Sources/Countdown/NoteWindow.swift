@@ -388,7 +388,13 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         button.setAccessibilityLabel(label)
     }
 
-    @objc private func commitLabel() { beginTimeEditing(clearInput: false) }
+    @objc private func commitLabel() {
+        guard let note = app.note(id) else { window?.makeFirstResponder(nil); return }
+        let awaitingTime = note.pausedRemaining == nil && (note.deadline == nil || note.isFinished(at: Date()))
+        let emptyInput = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if awaitingTime && emptyInput { beginTimeEditing(clearInput: false) }
+        else { window?.makeFirstResponder(nil) }
+    }
 
     func focusInput() {
         guard app.note(id)?.isCompact != true else { return }
